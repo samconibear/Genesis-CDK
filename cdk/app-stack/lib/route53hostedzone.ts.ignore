@@ -1,0 +1,79 @@
+import * as cdk from 'aws-cdk-lib';
+import { Details } from './tag';
+import { Protection } from './shield';
+import { SSMParameterCrossRegionReader } from './ssmparametercrossregionreader';
+import { IConstruct } from 'constructs';
+
+export class Route53HostedZone {
+  hostedZone_: cdk.aws_route53.HostedZone;
+  constructor(scope: IConstruct, id: string, details: Details, zoneName: string) {
+    this.hostedZone_ = new cdk.aws_route53.HostedZone(scope, id, {
+      zoneName,
+    });
+    new cdk.aws_ssm.StringParameter(scope, `${id}_hostedzoneid`, {
+      parameterName: `/${details.app}/route53/hostedzoneid`,
+      stringValue: this.hostedZone_.hostedZoneId,
+      description: `ID of the hosted zone ${zoneName}`,
+    });
+    new cdk.aws_ssm.StringParameter(scope, `${id}_hostedzonename`, {
+      parameterName: `/${details.app}/route53/zoneName`,
+      stringValue: zoneName,
+      description: `Name of the hosted zone: ${zoneName}`,
+    });
+    new Protection(scope, id, details, zoneName, this.hostedZone_.hostedZoneArn);
+  }
+
+  hostedZone(): cdk.aws_route53.HostedZone {
+    return this.hostedZone_;
+  }
+
+  static fromSSMParameter(scope: IConstruct, id: string): cdk.aws_route53.HostedZone {
+    const hostedZoneId = cdk.aws_ssm.StringParameter.valueForStringParameter(
+      scope,
+      '/account-setup/route53/hostedzoneid');
+
+    const zoneName = cdk.aws_ssm.StringParameter.valueForStringParameter(
+        scope,
+        '/account-setup/route53/zoneName');
+
+    return (cdk.aws_route53.HostedZone.fromHostedZoneAttributes(scope,`${id}_hostedzone`, {
+        hostedZoneId,
+        zoneName
+      }) as cdk.aws_route53.HostedZone);
+    }
+}
+
+export class AcmCertificate {
+  constructor(scope: IConstruct, id: string, details: Details, key: string) {
+    const zoneId      = cdk.aws_ssm.StringParameter.valueForStringParameter(scope, `/${key}/route53/hostedzoneid`);
+    const zoneName    = cdk.aws_ssm.StringParameter.valueForStringParameter(scope, `/${key}/route53/zoneName`);
+    const certificate = new cdk.aws_certificatemanager.Certificate(scope, `${id}_acm_certificate`, {
+      domainName: `*.${zoneName}`,
+      validation: cdk.aws_certificatemanager.CertificateValidation.fromDns(cdk.aws_route53.PublicHostedZone.fromHostedZoneId(scope, `${id}_public_zone_for_acm_certificate`, zoneId)),
+    });
+    new cdk.aws_ssm.StringParameter(scope, `${id}_acm_certificate_string_parameter`, {
+      parameterName: `/${details.app}/certificate/arn`,
+      stringValue:   certificate.certificateArn,
+      description:   `ARN of certificate (${cdk.Stack.of(scope).region}) for ${zoneName}`,
+    });
+  }
+}
+
+export class CloudfrontAcmCertificate {
+  constructor(scope: IConstruct, id: string, details: Details, key: string) {
+    if (cdk.Stack.of(scope).region !== 'us-east-1') { throw new Error(`CloudfrontAcmCertificate requires a scope in us-east-1 region. Provided scope is in region ${cdk.Stack.of(scope).region}`); }
+    const zoneId      = new SSMParameterCrossRegionReader(scope, `${id}_ssmparameterreader_zoneid`, {parameterName: `/${key}/route53/hostedzoneid`, region: 'eu-west-1'})
+      .getParameterValue();
+    const zoneName    = new SSMParameterCrossRegionReader(scope, `${id}_ssmparameterreader_zonename`, {parameterName: `/${key}/route53/zoneName`, region: 'eu-west-1'})
+      .getParameterValue();
+    const certificate = new cdk.aws_certificatemanager.Certificate(scope, `${id}_acm_certificate_cloudfront`, {
+      domainName: `*.${zoneName}`,
+      validation: cdk.aws_certificatemanager.CertificateValidation.fromDns(cdk.aws_route53.PublicHostedZone.fromHostedZoneId(scope, `${id}_public_zone_for_cloudfront_acm_certificate`, zoneId)),
+    });
+    new cdk.aws_ssm.StringParameter(scope, `${id}_acm_certificate_cloudfront_string_parameter`, {
+      parameterName: `/${details.app}/cloudfront_certificate/arn`,
+      stringValue:   certificate.certificateArn,
+      description:   `ARN of cloudfront certificate (us-east-1) for ${zoneName}`,
+    });
+  }
+}

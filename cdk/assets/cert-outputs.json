@@ -1,0 +1,7 @@
+{
+  "CertStack": {
+    "hostedZoneId": "Z0367863FTQN44N92WNV",
+    "certArn": "arn:aws:acm:us-east-1:959067479367:certificate/30d2f058-f625-4af4-84d1-981c9f905484",
+    "rootDomain": "sconi.io"
+  }
+}

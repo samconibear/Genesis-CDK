@@ -1,0 +1,97 @@
+import { Construct } from 'constructs';
+import {
+  aws_s3 as s3,
+  aws_cloudfront as cloudfront,
+  aws_cloudfront_origins as cloudfront_origins,
+  aws_iam as iam,
+  aws_ssm as ssm,
+  Stack,
+  RemovalPolicy,
+ } from 'aws-cdk-lib';
+
+export interface SiteProps {
+  scope: Stack,
+  domain: string;
+  id?: string,
+  // connectSrc: string[],
+  // frameSrc: string[],
+  bucketNameParameterName?: string,
+  createSubSite(props: SiteProps): Site
+}
+
+export class Site extends Construct {
+  _domain: string;
+  _bucket: s3.Bucket;
+  get bucket(): s3.Bucket { return this._bucket; }
+  get bucketArn(): string { return this._bucket.bucketArn; }
+
+  _cloudfrontDist: cloudfront.Distribution;
+  get cloudfrontDist(): cloudfront.Distribution { return this._cloudfrontDist; }
+  get cloudfrontArn(): string { return this._cloudfrontDist.distributionArn; }
+
+  constructor({ scope, id = crypto.randomUUID(), ...props }: SiteProps) {
+    super(scope, id);
+    this._domain = props.domain;
+
+    // Host the frontend sourcecode in S3
+    this._bucket = new s3.Bucket(this, 'site_bucket', {
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+    this.addTLSPolicyToS3Bucket();
+
+    // Expose the sources via cloudfront
+    this._cloudfrontDist = new cloudfront.Distribution(this, id, {
+      comment: `${Stack.of(this).stackName} | ${this._domain}`,
+      defaultBehavior: { 
+        origin: new cloudfront_origins.S3Origin(this._bucket), 
+        // responseHeadersPolicy: this.response_headers_policy(),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      },
+      domainNames: [  ],
+      // certificate: certificate,
+      minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2019,
+      sslSupportMethod: cloudfront.SSLMethod.SNI,
+      priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
+      defaultRootObject: "index.html",
+      // errorResponses,
+      // webAclId,
+    });
+
+    if (props.bucketNameParameterName) {
+      this.storeBucketNameInSSM(props.bucketNameParameterName);
+    }
+  }
+
+  createSubSite(props: SiteProps): Site {
+    const domain = this._domain 
+        ? `${this._domain}.${props.domain}`
+        : props.domain;
+    return new Site({ ...props, domain });
+  }
+
+  addTLSPolicyToS3Bucket() {
+    this._bucket.addToResourcePolicy(
+      new iam.PolicyStatement({
+        principals: [ new iam.AnyPrincipal(), ],
+        effect: iam.Effect.DENY,
+        actions: [ "*" ],
+        resources: [
+          this._bucket.bucketArn,
+          this._bucket.arnForObjects("*"),
+        ],
+        conditions: [
+          {"NumericLessThan": { "s3:TlsVersion": ["1.2"] }},
+          {"Bool": { "aws:SecureTransport": ["false"] }},
+        ]
+      })
+    );
+  }
+
+  storeBucketNameInSSM(parameterName: string): void {
+    new ssm.StringParameter(this, 'ssm_parameter', {
+      parameterName,
+      stringValue: this._bucket.bucketName,
+      description: `s3 bucket for site on app ${}`,
+    });
+  }
+}

@@ -1,0 +1,303 @@
+import * as cdk from 'aws-cdk-lib';
+import { SSMParameterCrossRegionReader } from './ssmparametercrossregionreader';
+import { Details, getAccountDomainName } from './tag';
+import { Route53HostedZone } from './route53hostedzone';
+import { Construct, IConstruct } from 'constructs';
+import * as zscaler from './zscaler';
+import * as path from 'path';
+
+interface AddBehaviorProps {
+  readonly pathPattern: string
+  readonly allowedMethods: cdk.aws_cloudfront.AllowedMethods
+  readonly originRequestPolicy: cdk.aws_cloudfront.OriginRequestPolicy
+  readonly cachePolicy?: cdk.aws_cloudfront.ICachePolicy
+  readonly functionAssociations?: cdk.aws_cloudfront.FunctionAssociation[]
+}
+interface AddOriginBehaviorProps extends AddBehaviorProps {
+  readonly origin: cdk.aws_cloudfront.IOrigin
+}
+interface AddApiGatewayBehaviorProps extends AddBehaviorProps {
+  readonly domainName: string
+}
+interface AddApiGatewayBehindCloudfrontBehaviorProps extends AddOriginBehaviorProps {
+}
+
+interface AddS3BehaviorProps extends AddBehaviorProps {
+  readonly bucket: cdk.aws_s3.Bucket
+}
+interface AddAlbBehaviorProps extends AddBehaviorProps {
+  readonly alb: cdk.aws_elasticloadbalancingv2.ApplicationLoadBalancer
+}
+interface ContentSecurityPolicyExtentProps {
+  readonly connectSrc?: string[];
+  readonly scriptSrc?: string[];
+  readonly styleSrc?: string[];
+  readonly fontSrc?: string[];
+  readonly workerSrc?: string[];
+  readonly imgSrc?: string[];
+}
+
+interface CloudfrontProps {
+  contentSecurityPolicy?: string;
+  contentSecurityPolicyExtent?: ContentSecurityPolicyExtentProps;
+  errorResponses?: cdk.aws_cloudfront.ErrorResponse [];
+  viewerRequestFunction?: cdk.aws_cloudfront.IFunction;
+  useZscalerIpLimitWafBlock?: boolean;
+  useZscalerIpLimitWafCount?: boolean;
+}
+
+export class CloudFront {
+  scope_: IConstruct;
+  id_: string;
+  details_: Details;
+  distribution_: cdk.aws_cloudfront.Distribution;
+  distribution(): cdk.aws_cloudfront.Distribution { return this.distribution_}
+
+  response_headers_policy_;
+  response_headers_policy(): cdk.aws_cloudfront.ResponseHeadersPolicy { return this.response_headers_policy_}
+
+  domain_names_: string[];
+  domain_names(): string[] { return this.domain_names_; }
+
+  constructor(
+      scope: IConstruct, 
+      id: string, 
+      details: Details, 
+      bucket: cdk.aws_s3.Bucket,
+      props?: CloudfrontProps,
+  ) {
+    this.scope_ = scope;
+    this.id_ = id;
+    this.details_ = details;
+    const contentSecurityPolicy = (props && props.contentSecurityPolicy) ? props.contentSecurityPolicy : 'default-src https:;';
+
+    if (props && props.contentSecurityPolicy) {
+      // TO BE DEPRECATED
+      // Create response header policy with provided policy
+      const contentSecurityPolicy = props.contentSecurityPolicy;
+      this.response_headers_policy_ = new cdk.aws_cloudfront.ResponseHeadersPolicy(scope, `${id}_response_header_policy`, {
+        responseHeadersPolicyName: details.app,
+        comment: `Security header response policy for ${details.app}`,
+        securityHeadersBehavior: {
+          contentSecurityPolicy: { contentSecurityPolicy, override: true },
+          contentTypeOptions: { override: true },
+          frameOptions: { frameOption: cdk.aws_cloudfront.HeadersFrameOption.SAMEORIGIN, override: true },
+          referrerPolicy: { referrerPolicy: cdk.aws_cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN, override: true },
+          strictTransportSecurity: { accessControlMaxAge: cdk.Duration.seconds(31536000), override: true },
+          xssProtection: { override: true, protection: true, modeBlock: true },
+        },
+        customHeadersBehavior: {
+          customHeaders: [
+            { header: 'Permissions-Policy', value: 'interest-cohort=()', override: true },
+          ],
+        },
+      });
+    } else {
+      const r = new ResponseHeadersPolicy(scope, "DefaultBehavior", {
+        details,
+        name: `${details.app}_`, // Rename to allow for deploy step to work when moving from previous approach
+        contentSecurityPolicyExtent: props ? props.contentSecurityPolicyExtent : undefined,
+      });
+      this.response_headers_policy_ = r.response_headers_policy();
+    }
+
+    // Create cloudfront
+    this.domain_names_ = [ `${details.app}.${getAccountDomainName(scope, 'dummy')}` ];
+
+    const certificate_arn = new SSMParameterCrossRegionReader(scope, `${id}_cloudfront_certificate_arn_reader`, {
+	    parameterName: '/account-setup/cloudfront_certificate/arn',
+	    region: 'us-east-1'
+    }).getParameterValue(); 
+
+    const certificate = cdk.aws_certificatemanager.Certificate.fromCertificateArn(scope, `${id}_cloudfront_certificate`, certificate_arn);
+    const errorResponses = (props && props.errorResponses) ? props.errorResponses: [];
+    const functionAssociations = (props && props.viewerRequestFunction) 
+      ? [ {eventType: cdk.aws_cloudfront.FunctionEventType.VIEWER_REQUEST, function: props.viewerRequestFunction } ]
+      : [];
+
+    // WAF
+    let webAclId; 
+    if (props && 'useZscalerIpLimitWafBlock' in props && props['useZscalerIpLimitWafBlock']) {
+      // Use the WAF that restrict traffic to the one originating via ZScaler IPs [Block]
+      webAclId = new zscaler.CloudfrontWafArn(scope, 'ZScalerWaf', details).waf_arn();
+    } else if (props && 'useZscalerIpLimitWafCount' in props && props['useZscalerIpLimitWafCount']) {
+      // Use the WAF that restrict traffic to the one originating via ZScaler IPs [Count]
+      webAclId = new zscaler.CloudfrontWafCountArn(scope, 'ZScalerWaf', details).waf_arn();
+    }
+
+    this.distribution_ = new cdk.aws_cloudfront.Distribution(scope, id, {
+      comment: `App: ${details.app}`,
+      defaultBehavior: { 
+        origin: new cdk.aws_cloudfront_origins.S3Origin(bucket), 
+        responseHeadersPolicy: this.response_headers_policy(),
+        viewerProtocolPolicy: cdk.aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        functionAssociations,
+      },
+      domainNames: this.domain_names_,
+      certificate: certificate,
+      minimumProtocolVersion: cdk.aws_cloudfront.SecurityPolicyProtocol.TLS_V1_2_2019,
+      sslSupportMethod: cdk.aws_cloudfront.SSLMethod.SNI,
+      priceClass: cdk.aws_cloudfront.PriceClass.PRICE_CLASS_100,
+      defaultRootObject: "index.html",
+      errorResponses,
+      webAclId,
+    });
+
+    cdk.Tags.of(this.distribution_).add('DDoSAutomaticMitigationBlock', 'True');
+
+    if (webAclId === undefined) {
+      // Use the Group WAF
+      cdk.Tags.of(this.distribution_).add('is_an_AWS_FMS_WAFv2_protected_resource', 'Block');
+    }
+
+    new cdk.aws_ssm.StringParameter(scope, `${id}_ssm_string_parameter`, {
+      parameterName: `/${details.app}/cloudfront/id`,
+      stringValue: this.distribution_.distributionId,
+      description: `Cloudfront distribution ID for application ${details.app}`,
+    });
+
+
+    // Add A record to hosted zone
+    const zone = Route53HostedZone.fromSSMParameter(scope, `${id}_hosted_zone`);
+    new cdk.aws_route53.ARecord(scope, `${id}_cloudfront_arecord`, {
+      comment: `A Record to cloudfront for ${details.app}`,
+      zone,
+      target: cdk.aws_route53.RecordTarget.fromAlias(
+          new cdk.aws_route53_targets.CloudFrontTarget(this.distribution_)),
+      recordName: details.app,
+    });
+  }
+
+  addOriginBehavior(props: AddOriginBehaviorProps) {
+    const {
+      pathPattern, origin,
+      allowedMethods, originRequestPolicy, cachePolicy, functionAssociations,
+    } = props;
+
+    this.distribution_.addBehavior(
+      pathPattern,
+      origin, 
+      {
+        allowedMethods, originRequestPolicy, cachePolicy, functionAssociations,
+        compress: false,
+        viewerProtocolPolicy: cdk.aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        responseHeadersPolicy: this.response_headers_policy_,
+      }
+    );
+  }
+
+  addApiGatewayBehindCloudfrontBehavior(props: AddApiGatewayBehindCloudfrontBehaviorProps) {
+    const functionAssociations = props.functionAssociations ? props.functionAssociations
+      : [
+        { eventType: cdk.aws_cloudfront.FunctionEventType.VIEWER_REQUEST,
+          function: new cdk.aws_cloudfront.Function(this.scope_, 
+            `${this.id_}_api_gateway_cloudfront_force_json`,
+            {
+              code: cdk.aws_cloudfront.FunctionCode.fromFile({
+                filePath: path.join(__dirname, 'cloudfront', 'content_type_application_json.js'),
+              }),
+              functionName: `${this.details_.app}_filter_content_type`,
+              comment: `App ${this.details_.app}: Reject POST, PUT and PATCH request that have a content-type not set to application/json`,
+              runtime: cdk.aws_cloudfront.FunctionRuntime.JS_2_0,
+            }),
+        },
+      ];
+    const cachePolicy = props.cachePolicy ? props.cachePolicy
+      : cdk.aws_cloudfront.CachePolicy.CACHING_DISABLED;
+    this.addOriginBehavior({...props, functionAssociations, cachePolicy, });
+  }
+
+  addApiGatewayBehavior(props: AddApiGatewayBehaviorProps) {
+    const { domainName, } = props;
+    const origin = new cdk.aws_cloudfront_origins.HttpOrigin(domainName, {
+          originId: 'apigw_as_http',
+          originPath: '/gw_stage',
+          originSslProtocols: [ cdk.aws_cloudfront.OriginSslPolicy.TLS_V1_2 ],
+          protocolPolicy: cdk.aws_cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+    });
+    this.addOriginBehavior({ ...props, origin, });
+  }                                                                                                                                                                                                              
+  addS3GatewayBehavior(props: AddS3BehaviorProps) {
+    const { bucket, } = props;
+    const origin = new cdk.aws_cloudfront_origins.S3Origin(bucket);
+    this.addOriginBehavior({ ...props, origin, });
+  }
+
+  addAlbBehavior(props: AddAlbBehaviorProps) {
+    const { alb } = props;
+    const origin = new cdk.aws_cloudfront_origins.LoadBalancerV2Origin(alb, {
+        originId: "alb"
+    });
+    this.addOriginBehavior({ ...props, origin, });
+  }
+}
+
+/** ResponseHeaderPolicy */
+interface ResponseHeadersPolicyProps {
+  details: Details,
+  contentSecurityPolicyExtent?: ContentSecurityPolicyExtentProps;
+  name: string,
+}
+
+export class ResponseHeadersPolicy extends Construct {
+  response_headers_policy_: cdk.aws_cloudfront.ResponseHeadersPolicy;
+  response_headers_policy(): cdk.aws_cloudfront.ResponseHeadersPolicy { return this.response_headers_policy_}
+
+  constructor(scope: Construct, id: string, props: ResponseHeadersPolicyProps) {
+    super(scope, id)
+
+    const { details,
+      } = props;
+
+    // Define response header policy name
+    const responseHeadersPolicyName = props.name;
+
+    // Specify content security policy
+    let connectSrc = [
+      "'self'",
+      'https://page-view-counter.onecloud.red-eng.com/',
+       'https://engieapppreview.oktapreview.com/',
+       'https://engie.okta-emea.com/',
+    ];
+    let frameSrc = [
+      "'self'",
+      'https://engieapppreview.oktapreview.com/',
+      'https://engie.okta-emea.com/',
+    ];
+    let scriptSrc = [ "'self'", ];
+    let styleSrc = [ "'self'", ];
+    let fontSrc = [ "'self'", ];
+    let workerSrc = [ "'self'", ];
+    let imgSrc = [ "'self'", ];
+    if (props.contentSecurityPolicyExtent) {
+      if (props.contentSecurityPolicyExtent.connectSrc) { connectSrc.push(...props.contentSecurityPolicyExtent.connectSrc); }
+      if (props.contentSecurityPolicyExtent.scriptSrc)  { scriptSrc.push(...props.contentSecurityPolicyExtent.scriptSrc); }
+      if (props.contentSecurityPolicyExtent.styleSrc)   { styleSrc.push(...props.contentSecurityPolicyExtent.styleSrc); }
+      if (props.contentSecurityPolicyExtent.fontSrc)    { fontSrc.push(...props.contentSecurityPolicyExtent.fontSrc); }
+      if (props.contentSecurityPolicyExtent.workerSrc)  { workerSrc.push(...props.contentSecurityPolicyExtent.workerSrc); }
+      if (props.contentSecurityPolicyExtent.imgSrc)     { imgSrc.push(...props.contentSecurityPolicyExtent.imgSrc); }
+    }
+    const contentSecurityPolicy = `default-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'; connect-src ${connectSrc.join(" ")}; img-src ${imgSrc.join(" ")}; script-src ${scriptSrc.join(" ")}; style-src ${styleSrc.join(" ")}; worker-src ${workerSrc.join(" ")}; frame-src ${frameSrc.join(" ")}; font-src ${fontSrc.join(" ")}; report-uri /csp-reports;`;
+
+    // Create response header policy
+    this.response_headers_policy_ = new cdk.aws_cloudfront.ResponseHeadersPolicy(this, `ResponseHeaderPolicy`, {
+      responseHeadersPolicyName,
+      comment: `Security header response policy for ${details.app}`,
+      securityHeadersBehavior: {
+        contentSecurityPolicy: { contentSecurityPolicy, override: true },
+        contentTypeOptions: { override: true },
+        frameOptions: { frameOption: cdk.aws_cloudfront.HeadersFrameOption.SAMEORIGIN, override: true },
+        referrerPolicy: { referrerPolicy: cdk.aws_cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN, override: true },
+        strictTransportSecurity: { accessControlMaxAge: cdk.Duration.seconds(31536000), override: true },
+        xssProtection: { override: true, protection: true, modeBlock: true },
+      },
+      customHeadersBehavior: {
+        customHeaders: [
+          { header: 'Permissions-Policy', value: 'interest-cohort=()', override: true },
+          { header: 'Cache-Control', value: 'no-cache', override: false },
+        ],
+      },
+    });
+  }
+}
+
