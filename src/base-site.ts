@@ -13,7 +13,7 @@ import {
   Size,
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
-import { SubSiteProps } from './sub-site';
+import { SubSiteProps } from './sub-site.js';
 import { randomUUID } from 'crypto';
 
 export interface BaseSiteProps {
@@ -23,17 +23,14 @@ export interface BaseSiteProps {
   id?: string;
   hostedZone: route53.IHostedZone;
   cloudfrontCertificate: certificatemanager.ICertificate;
-  // connectSrc: string[],
-  // frameSrc: string[],
   bucketNameParameterName?: string;
 }
-
 
 export class BaseSite extends Construct {
   private _domains: string[];
   private _scope: Stack;
   private _hostedZone: route53.IHostedZone;
-  private _cloudfrontCertificate: certificatemanager.ICertificate
+  private _cloudfrontCertificate: certificatemanager.ICertificate;
   private _bucket: s3.Bucket;
   get bucket(): s3.Bucket { return this._bucket; }
   get bucketArn(): string { return this._bucket.bucketArn; }
@@ -48,45 +45,42 @@ export class BaseSite extends Construct {
     this._hostedZone = props.hostedZone;
     this._cloudfrontCertificate = props.cloudfrontCertificate;
     this._domains = props.domains;
-    const fullDomain = props.domains.join('.')
-    const subDomain = props.domains.slice(0, -1).join('.')
+    const fullDomain = props.domains.join('.');
+    const subDomain = props.domains.slice(0, -1).join('.');
 
-    // Host the frontend sourcecode in S3
     this._bucket = new s3.Bucket(this, 'site_bucket', {
       removalPolicy: RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
     });
     this.addTLSPolicyToS3Bucket();
+
     new s3_deployment.BucketDeployment(this, 'deploy_website', {
-      sources: [ s3_deployment.Source.asset(props.src) ],
+      sources: [s3_deployment.Source.asset(props.src)],
       destinationBucket: this._bucket,
       memoryLimit: 256,
-      ephemeralStorageSize: Size.gibibytes(1)
+      ephemeralStorageSize: Size.gibibytes(1),
     });
 
-    // Expose the sources via cloudfront
-    this._cloudfrontDist = new cloudfront.Distribution(this, 'cloudfront_dst', {
+    this._cloudfrontDist = new cloudfront.Distribution(this, 'cloudfront_dist', {
       comment: `${Stack.of(this).stackName} | ${fullDomain}`,
-      defaultBehavior: { 
-        origin: new cloudfront_origins.S3Origin(this._bucket), 
-        // responseHeadersPolicy: this.response_headers_policy(),
+      defaultBehavior: {
+        origin: new cloudfront_origins.S3Origin(this._bucket),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       },
-      domainNames: [ fullDomain ],
+      domainNames: [fullDomain],
       certificate: this._cloudfrontCertificate,
       minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2019,
       sslSupportMethod: cloudfront.SSLMethod.SNI,
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
-      defaultRootObject: "index.html",
-      // errorResponses,
-      // webAclId,
+      defaultRootObject: 'index.html',
     });
 
-    new route53.ARecord(this, `cloudfront_arecord`, {
-      comment: `A Record to cloudfront for ${fullDomain}`,
+    new route53.ARecord(this, 'cloudfront_arecord', {
+      comment: `A Record to CloudFront for ${fullDomain}`,
       zone: this._hostedZone,
       target: route53.RecordTarget.fromAlias(
-        new route53_targets.CloudFrontTarget(this._cloudfrontDist)),
+        new route53_targets.CloudFrontTarget(this._cloudfrontDist)
+      ),
       recordName: subDomain,
     });
 
@@ -105,31 +99,31 @@ export class BaseSite extends Construct {
     });
   }
 
-  addTLSPolicyToS3Bucket() {
+  private addTLSPolicyToS3Bucket() {
     [
-      {"NumericLessThan": { "s3:TlsVersion": ["1.2"] }},
-      {"Bool": { "aws:SecureTransport": ["false"] }},
+      { NumericLessThan: { 's3:TlsVersion': ['1.2'] } },
+      { Bool: { 'aws:SecureTransport': ['false'] } },
     ].forEach(conditions => {
       this._bucket.addToResourcePolicy(
         new iam.PolicyStatement({
-          principals: [ new iam.AnyPrincipal(), ],
+          principals: [new iam.AnyPrincipal()],
           effect: iam.Effect.DENY,
-          actions: [ "*" ],
+          actions: ['*'],
           resources: [
             this._bucket.bucketArn,
-            this._bucket.arnForObjects("*"),
+            this._bucket.arnForObjects('*'),
           ],
           conditions,
         })
-      )
+      );
     });
   }
 
-  storeBucketNameInSSM(parameterName: string): void {
+  private storeBucketNameInSSM(parameterName: string): void {
     new ssm.StringParameter(this, 'ssm_parameter', {
       parameterName,
       stringValue: this._bucket.bucketName,
-      description: `s3 bucket for site: ${this._domains.join('.')}`,
+      description: `S3 bucket for site: ${this._domains.join('.')}`,
     });
   }
 }
