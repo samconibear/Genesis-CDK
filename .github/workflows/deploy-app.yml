@@ -1,0 +1,92 @@
+# Reusable workflow: deploy AppStack via CDK using OIDC auth.
+#
+# Call from your own repo:
+#
+#   jobs:
+#     deploy:
+#       uses: <your-org>/genesis-cdk/.github/workflows/deploy-app.yml@main
+#       with:
+#         aws-region: eu-west-2
+#         role-arn: arn:aws:iam::123456789012:role/genesis-cdk-ci-example.com
+#       permissions:
+#         id-token: write
+#         contents: read
+#
+# The role-arn is the CiRoleArn output from your CertStack deploy.
+# It is scoped to the main branch of the repo specified in CertStack.githubRepo.
+
+name: Deploy App
+
+on:
+  workflow_call:
+    inputs:
+      aws-region:
+        description: AWS region for the AppStack
+        required: true
+        type: string
+      role-arn:
+        description: IAM role ARN to assume via OIDC (CiRoleArn output from CertStack)
+        required: true
+        type: string
+      stack-name:
+        description: CDK stack name to deploy
+        required: false
+        type: string
+        default: AppStack
+      node-version:
+        description: Node.js version
+        required: false
+        type: string
+        default: '22'
+      build-command:
+        description: Shell command to build static assets (runs after npm ci, before cdk deploy)
+        required: false
+        type: string
+        default: ''
+      working-directory:
+        description: Directory containing the CDK app (where package.json lives)
+        required: false
+        type: string
+        default: .
+      extra-cdk-args:
+        description: Extra arguments appended to cdk deploy (e.g. --context key=value)
+        required: false
+        type: string
+        default: ''
+
+# id-token:write is required for OIDC auth.
+# Callers must also grant these permissions in their workflow.
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: Build
+        if: ${{ inputs.build-command != '' }}
+        run: ${{ inputs.build-command }}
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.role-arn }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Deploy
+        run: npx cdk deploy ${{ inputs.stack-name }} --require-approval never ${{ inputs.extra-cdk-args }}
+        working-directory: ${{ inputs.working-directory }}

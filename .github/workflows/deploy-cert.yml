@@ -1,0 +1,85 @@
+# Reusable workflow: deploy CertStack (one-time per domain).
+#
+# CertStack must be deployed once before AppStack. It creates:
+#   - Route53 hosted zone
+#   - ACM wildcard certificate (us-east-1, required for CloudFront)
+#   - SSM parameters read by AppStack at synth time
+#   - GitHub OIDC role used by deploy-app.yml
+#
+# Prerequisites:
+#   1. CDK bootstrapped in us-east-1: npx cdk bootstrap aws://<account>/us-east-1
+#   2. AWS credentials with CloudFormation/ACM/Route53/SSM/IAM/OIDC permissions
+#
+# Call from your own repo (trigger manually via workflow_dispatch):
+#
+#   on:
+#     workflow_dispatch:
+#
+#   jobs:
+#     cert:
+#       uses: <your-org>/genesis-cdk/.github/workflows/deploy-cert.yml@main
+#       secrets:
+#         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+#         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+#
+# After deploying, copy the CiRoleArn output into your deploy-app workflow's role-arn input.
+# Once deployed you can delete the AWS access key secrets — AppStack uses OIDC only.
+
+name: Deploy Cert Stack
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: Node.js version
+        required: false
+        type: string
+        default: '22'
+      working-directory:
+        description: Directory containing the CDK app (where package.json lives)
+        required: false
+        type: string
+        default: .
+      extra-cdk-args:
+        description: Extra arguments appended to cdk deploy
+        required: false
+        type: string
+        default: ''
+    secrets:
+      aws-access-key-id:
+        description: AWS access key ID with permissions to deploy CertStack
+        required: true
+      aws-secret-access-key:
+        description: AWS secret access key
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-cert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.aws-access-key-id }}
+          aws-secret-access-key: ${{ secrets.aws-secret-access-key }}
+          # CertStack is always us-east-1 (required for CloudFront certificates)
+          aws-region: us-east-1
+
+      - name: Deploy CertStack
+        run: npx cdk deploy CertStack --require-approval never ${{ inputs.extra-cdk-args }}
+        working-directory: ${{ inputs.working-directory }}

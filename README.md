@@ -16,6 +16,22 @@ AWS CDK constructs for deploying static websites — S3, CloudFront, Route53, AC
 
 ---
 
+## Installation
+
+```bash
+npm install genesis-cdk
+```
+
+`aws-cdk-lib` and `constructs` are peer dependencies — install them alongside if your project doesn't already have them:
+
+```bash
+npm install genesis-cdk aws-cdk-lib constructs
+```
+
+genesis-cdk ships as ESM with bundled TypeScript declarations. No extra build config is needed beyond a standard CDK `tsconfig.json`.
+
+---
+
 ## How it works
 
 genesis-cdk has two stacks that you deploy once each, in order:
