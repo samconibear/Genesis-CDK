@@ -4,5 +4,6 @@ lib/
 *.pkg
 *.zip
 *.js
+!website/*.js
 *.d.ts
 *.js.map

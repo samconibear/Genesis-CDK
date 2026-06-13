@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Golf Score Differential Calculator — England</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <span class="logo">⛳</span>
+      <div>
+        <h1>Golf Score Differential Calculator</h1>
+        <p class="subtitle">England Golf — World Handicap System</p>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="card">
+      <h2 class="section-title">Course</h2>
+
+      <div class="field">
+        <label for="course-search">Search course</label>
+        <input
+          id="course-search"
+          type="text"
+          placeholder="Type to filter courses…"
+          autocomplete="off"
+        />
+        <div id="course-dropdown" class="dropdown hidden"></div>
+      </div>
+
+      <div id="course-info" class="course-info hidden">
+        <div class="info-grid">
+          <div class="info-item">
+            <span class="info-label">Region</span>
+            <span id="info-region" class="info-value">—</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Course Rating</span>
+            <span id="info-cr" class="info-value">—</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Slope Rating</span>
+            <span id="info-slope" class="info-value">—</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Par</span>
+            <span id="info-par" class="info-value">—</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="section-title">Your Round</h2>
+
+      <div class="inputs-row">
+        <div class="field">
+          <label for="gross-score">Adjusted Gross Score</label>
+          <input
+            id="gross-score"
+            type="number"
+            min="50"
+            max="150"
+            placeholder="e.g. 85"
+          />
+          <span class="hint">Your total strokes for the round</span>
+        </div>
+
+        <div class="field">
+          <label for="handicap-index">Handicap Index</label>
+          <input
+            id="handicap-index"
+            type="number"
+            min="-10"
+            max="54"
+            step="0.1"
+            placeholder="e.g. 14.2"
+          />
+          <span class="hint">Your current WHS handicap index</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="results" class="card results hidden">
+      <h2 class="section-title">Results</h2>
+
+      <div class="results-grid">
+        <div class="result-card primary">
+          <span class="result-label">Score Differential</span>
+          <span id="res-differential" class="result-value">—</span>
+          <span class="result-desc">This round's handicap differential</span>
+        </div>
+
+        <div class="result-card">
+          <span class="result-label">Course Handicap</span>
+          <span id="res-course-hcp" class="result-value">—</span>
+          <span class="result-desc">Strokes you play off at this course</span>
+        </div>
+
+        <div class="result-card">
+          <span class="result-label">Net Score</span>
+          <span id="res-net" class="result-value">—</span>
+          <span class="result-desc">Gross score minus course handicap</span>
+        </div>
+
+        <div class="result-card">
+          <span class="result-label">Score vs Handicap</span>
+          <span id="res-vs-hcp" class="result-value">—</span>
+          <span class="result-desc">How this round compares to your index</span>
+        </div>
+      </div>
+
+      <div id="verdict" class="verdict"></div>
+    </div>
+
+    <details class="card explainer">
+      <summary>How is this calculated?</summary>
+      <div class="explainer-body">
+        <p>
+          Under the <strong>World Handicap System (WHS)</strong> used by England Golf, your
+          <em>Score Differential</em> measures how well you played relative to a scratch golfer on
+          that specific course and set of tees.
+        </p>
+        <dl>
+          <dt>Score Differential</dt>
+          <dd><code>(113 ÷ Slope Rating) × (Adjusted Gross Score − Course Rating)</code></dd>
+
+          <dt>Course Handicap</dt>
+          <dd><code>Handicap Index × (Slope Rating ÷ 113) + (Course Rating − Par)</code> <em>(rounded)</em></dd>
+
+          <dt>Net Score</dt>
+          <dd><code>Adjusted Gross Score − Course Handicap</code></dd>
+        </dl>
+        <p>
+          The <strong>Slope Rating</strong> (55–155, standard 113) reflects how much harder a course is
+          for a bogey golfer vs a scratch golfer. The <strong>Course Rating</strong> is the expected
+          score for a scratch golfer. Both are set by England Golf for each set of tees.
+        </p>
+        <p>
+          Course data is sourced from published England Golf ratings. Always confirm current tee ratings
+          with your club before submitting a score to your handicapping authority.
+        </p>
+      </div>
+    </details>
+  </main>
+
+  <footer>
+    <p>Built with <a href="https://github.com/samconibear/genesis-cdk" target="_blank" rel="noopener">genesis-cdk</a> · Data: England Golf / WHS</p>
+  </footer>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
