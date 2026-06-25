@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["es2022"],
+    "outDir": "lib",
+    "rootDir": "bin",
+    "strict": true,
+    "skipLibCheck": true,
+    "inlineSourceMap": true,
+    "inlineSources": true
+  },
+  "include": ["bin/**/*.ts"],
+  "exclude": ["bin/app.ts", "bin/cert.ts"]
+}

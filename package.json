@@ -5,12 +5,15 @@
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
+  "bin": {
+    "genesis-cdk": "lib/cli.js"
+  },
   "files": [
     "lib/**/*.js",
     "lib/**/*.d.ts"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && tsc -p tsconfig.cli.json",
     "watch": "tsc -w",
     "test": "jest"
   },

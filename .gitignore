@@ -1,8 +1,5 @@
 node_modules/
 cdk.out/
-lib/
 *.pkg
 *.zip
-*.js
-*.d.ts
-*.js.map
+lib/
