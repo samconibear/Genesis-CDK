@@ -14,6 +14,7 @@
   ],
   "scripts": {
     "build": "tsc && tsc -p tsconfig.cli.json",
+    "prepare": "npm run build",
     "watch": "tsc -w",
     "test": "jest"
   },
