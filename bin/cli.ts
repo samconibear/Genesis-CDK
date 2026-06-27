@@ -69,7 +69,7 @@ if (isCore) {
       certPath,
       `#!/usr/bin/env node
 import * as cdk from 'aws-cdk-lib';
-import { CertStack, CiRole, RootSite } from 'genesis-cdk';
+import { CertStack, CiRole } from 'genesis-cdk';
 
 const app = new cdk.App();
 
@@ -83,8 +83,22 @@ new CiRole(certStack, 'CiRole', {
   accountId: process.env.CDK_DEFAULT_ACCOUNT ?? '',
   githubRepo: process.env.GITHUB_REPOSITORY ?? 'my-org/my-repo',
 });
+`
+    );
+    console.log('Created bin/cert.ts');
+  }
 
-const appStack = new cdk.Stack(app, 'AppStack', {
+  const appPath = join(cwd, 'bin', 'app.ts');
+  if (!existsSync(appPath)) {
+    writeFileSync(
+      appPath,
+      `#!/usr/bin/env node
+import * as cdk from 'aws-cdk-lib';
+import { RootSite } from 'genesis-cdk';
+
+const app = new cdk.App();
+
+const stack = new cdk.Stack(app, 'AppStack', {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: process.env.CDK_DEFAULT_REGION ?? 'eu-west-2',
@@ -92,19 +106,17 @@ const appStack = new cdk.Stack(app, 'AppStack', {
 });
 
 new RootSite({
-  scope: appStack,
+  scope: stack,
   domain: process.env.DOMAIN ?? 'example.com',
   src: './dist',
 });
 `
     );
-    console.log('Created bin/cert.ts');
+    console.log('Created bin/app.ts');
   }
-}
-
-const appPath = join(cwd, 'bin', 'app.ts');
-if (!existsSync(appPath)) {
-  if (!isCore) {
+} else {
+  const appPath = join(cwd, 'bin', 'app.ts');
+  if (!existsSync(appPath)) {
     writeFileSync(
       appPath,
       `#!/usr/bin/env node
@@ -127,18 +139,18 @@ new SubSite({
 });
 `
     );
+    console.log('Created bin/app.ts');
   }
-  console.log('Created bin/app.ts');
 }
 
-if (!isCore) {
-  console.log('\nDone. Next steps:');
-  console.log('  1. Set DOMAIN to the root domain that owns the cert (e.g. export DOMAIN=example.com)');
-  console.log('  2. Edit bin/app.ts — set the subdomain label and src path');
-  console.log('  3. Deploy: cdk deploy AppStack');
-} else {
+if (isCore) {
   console.log('\nDone. Next steps:');
   console.log('  1. Set your DOMAIN environment variable (e.g. export DOMAIN=example.com)');
-  console.log('  2. Deploy the certificate stack once: cdk deploy CertStack --app "npx ts-node --esm bin/cert.ts"');
-  console.log('  3. Deploy your site:                  cdk deploy AppStack');
+  console.log('  2. Deploy the certificate stack once: cdk deploy --all --app "npx ts-node --esm bin/cert.ts"');
+  console.log('  3. Update nameservers at your registrar to point to Route53, then wait for DNS propagation');
+  console.log('  4. Deploy your site:                  cdk deploy AppStack');
+} else {
+  console.log('\nDone. Next steps:');
+  console.log('  1. Edit bin/app.ts — set the subdomain label and src path');
+  console.log('  2. Deploy: cdk deploy AppStack');
 }

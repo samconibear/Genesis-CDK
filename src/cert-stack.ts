@@ -4,12 +4,21 @@ import {
   aws_ssm,
   Stack,
   StackProps,
+  ContextProvider,
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 
 export interface CertStackProps extends StackProps {
   domain: string;
   accountId: string;
+}
+
+export function ssmLookup(scope: Stack, paramName: string): string {
+  return ContextProvider.getValue(scope, {
+    provider: 'ssm',
+    props: { parameterName: paramName, region: 'us-east-1' },
+    dummyValue: `dummy-value-for-${paramName}`,
+  }).value as string;
 }
 
 export const ssmParamName = {

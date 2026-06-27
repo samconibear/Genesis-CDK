@@ -1,6 +1,6 @@
-import { Stack, aws_route53, aws_certificatemanager, aws_ssm } from 'aws-cdk-lib';
+import { Stack, aws_route53, aws_certificatemanager } from 'aws-cdk-lib';
 import { BaseSite, BaseSiteProps } from './base-site.js';
-import { ssmParamName } from './cert-stack.js';
+import { ssmParamName, ssmLookup } from './cert-stack.js';
 
 export interface RootSiteProps {
   scope: Stack;
@@ -12,15 +12,13 @@ export interface RootSiteProps {
 
 export class RootSite extends BaseSite {
   constructor(props: RootSiteProps) {
-    const hostedZoneId = aws_ssm.StringParameter.valueFromLookup(
-      props.scope,
-      ssmParamName.hostedZoneId(props.domain)
-    );
-
-    const certArn = aws_ssm.StringParameter.valueFromLookup(
-      props.scope,
-      ssmParamName.certArn(props.domain)
-    );
+    const hostedZoneId = ssmLookup(props.scope, ssmParamName.hostedZoneId(props.domain));
+    const certArnRaw = ssmLookup(props.scope, ssmParamName.certArn(props.domain));
+    // valueFromLookup returns a dummy string on the first synth pass (before SSM is populated).
+    // CloudFront validates ARN format at synth time, so we substitute a well-formed placeholder.
+    const certArn = certArnRaw.startsWith('dummy-value-for-')
+      ? 'arn:aws:acm:us-east-1:123456789012:certificate/dummy'
+      : certArnRaw;
 
     const hostedZone = aws_route53.HostedZone.fromHostedZoneAttributes(
       props.scope,
