@@ -2,11 +2,8 @@ import { aws_iam, CfnOutput, Duration, Stack } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 
 export interface CiRoleProps {
-  /** The root domain, used to scope SSM and ACM permissions (e.g. 'example.com') */
   domain: string;
-  /** GitHub repo in 'owner/repo' format */
-  githubRepo: string;
-  /** AWS account ID, used to scope IAM resource ARNs */
+  githubRepos: string[]; // owner/repo
   accountId: string;
 }
 
@@ -16,7 +13,7 @@ export class CiRole extends Construct {
   constructor(scope: Construct, id: string, props: CiRoleProps) {
     super(scope, id);
 
-    const { domain, accountId, githubRepo } = props;
+    const { domain, accountId, githubRepos } = props;
     const accountId_ = accountId ?? Stack.of(this).account;
 
     const oidcProvider = new aws_iam.OpenIdConnectProvider(this, 'github_oidc_provider', {
@@ -33,9 +30,8 @@ export class CiRole extends Construct {
           'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
         },
         StringLike: {
-          // Scoped to the main branch of the specified repo only
-          'token.actions.githubusercontent.com:sub': `repo:${githubRepo}:ref:refs/heads/main`,
-        },
+          'token.actions.githubusercontent.com:sub': githubRepos.map(repo =>  `repo:${repo}:ref:refs/heads/main`)
+        }
       }),
       maxSessionDuration: Duration.hours(1),
     });

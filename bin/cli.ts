@@ -7,10 +7,22 @@ const args = process.argv.slice(2);
 const command = args[0];
 const isCore = args.includes('--core');
 
+const domainFlagIndex = args.findIndex(a => a.startsWith('--domain='));
+const domain = domainFlagIndex !== -1
+  ? args[domainFlagIndex].slice('--domain='.length)
+  : undefined;
+
 if (command !== 'init') {
-  console.error('Usage: genesis-cdk init [--core|--site]');
+  console.error('Usage: genesis-cdk init [--core|--site] --domain=<domain>');
   process.exit(1);
 }
+
+if (!domain) {
+  console.error('Error: --domain=<domain> is required (e.g. --domain=example.com)');
+  process.exit(1);
+}
+
+const stackName = domain.replace(/\./g, '-');
 
 const cwd = process.cwd();
 
@@ -73,15 +85,15 @@ import { CertStack, CiRole } from 'genesis-cdk';
 
 const app = new cdk.App();
 
-const certStack = new CertStack(app, 'CertStack', {
+const certStack = new CertStack(app, '${stackName}-cert', {
   accountId: process.env.CDK_DEFAULT_ACCOUNT ?? '',
-  domain: process.env.DOMAIN ?? 'example.com',
+  domain: '${domain}',
 });
 
 new CiRole(certStack, 'CiRole', {
-  domain: process.env.DOMAIN ?? 'example.com',
+  domain: '${domain}',
   accountId: process.env.CDK_DEFAULT_ACCOUNT ?? '',
-  githubRepo: process.env.GITHUB_REPOSITORY ?? 'my-org/my-repo',
+  githubRepos: [process.env.GITHUB_REPOSITORY ?? 'my-org/my-repo'],
 });
 `
     );
@@ -98,7 +110,7 @@ import { RootSite } from 'genesis-cdk';
 
 const app = new cdk.App();
 
-const stack = new cdk.Stack(app, 'AppStack', {
+const stack = new cdk.Stack(app, '${stackName}', {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: process.env.CDK_DEFAULT_REGION ?? 'eu-west-2',
@@ -107,7 +119,7 @@ const stack = new cdk.Stack(app, 'AppStack', {
 
 new RootSite({
   scope: stack,
-  domain: process.env.DOMAIN ?? 'example.com',
+  domain: '${domain}',
   src: './dist',
 });
 `
@@ -125,7 +137,7 @@ import { SubSite } from 'genesis-cdk';
 
 const app = new cdk.App();
 
-const stack = new cdk.Stack(app, 'AppStack', {
+const stack = new cdk.Stack(app, '${stackName}', {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: process.env.CDK_DEFAULT_REGION ?? 'eu-west-2',
@@ -134,7 +146,7 @@ const stack = new cdk.Stack(app, 'AppStack', {
 
 new SubSite({
   scope: stack,
-  domain: 'sub',
+  domain: '${domain}',
   src: './dist',
 });
 `
@@ -145,12 +157,11 @@ new SubSite({
 
 if (isCore) {
   console.log('\nDone. Next steps:');
-  console.log('  1. Set your DOMAIN environment variable (e.g. export DOMAIN=example.com)');
-  console.log('  2. Deploy the certificate stack once: cdk deploy --all --app "npx ts-node --esm bin/cert.ts"');
-  console.log('  3. Update nameservers at your registrar to point to Route53, then wait for DNS propagation');
-  console.log('  4. Deploy your site:                  cdk deploy AppStack');
+  console.log(`  1. Deploy the certificate stack once: cdk deploy --all --app "npx ts-node --esm bin/cert.ts"`);
+  console.log('  2. Update nameservers at your registrar to point to Route53, then wait for DNS propagation');
+  console.log(`  3. Deploy your site: cdk deploy ${stackName}`);
 } else {
   console.log('\nDone. Next steps:');
-  console.log('  1. Edit bin/app.ts — set the subdomain label and src path');
-  console.log('  2. Deploy: cdk deploy AppStack');
+  console.log('  1. Edit bin/app.ts — set the src path');
+  console.log(`  2. Deploy: cdk deploy ${stackName}`);
 }

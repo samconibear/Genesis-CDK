@@ -1,124 +1,87 @@
 # genesis-cdk
 
-AWS CDK constructs for deploying static websites — S3, CloudFront, Route53, ACM — with zero infrastructure knowledge required.
-
-**genesis-cdk takes you from nothing → a deployed, HTTPS website on your own domain** using AWS best practices.
+CDK constructs for deploying static websites on AWS — S3, CloudFront, Route53, ACM.
 
 ---
 
-## Prerequisites
-
-- An AWS account
-- A registered domain (the domain itself, not hosted in Route53 yet — genesis-cdk creates the hosted zone)
-- Node.js 18+
-- AWS CLI configured (`aws configure`)
-- AWS CDK CLI (`npm install -g aws-cdk`)
-
----
-
-## Quickstart
-
-### Option 1: Full setup — root site + certificate
-
-Use this when setting up a new domain from scratch.
+## Install
 
 ```bash
-npx genesis-cdk init --core
-```
-
-This installs all dependencies and scaffolds:
-
-- `bin/cert.ts` — deploys `CertStack` (hosted zone + ACM certificate) and `CiRole` (GitHub Actions OIDC role), outputs stored in SSM for other stacks to consume
-- `bin/app.ts` — deploys `AppStack` with a `RootSite` that reads cert and zone from SSM
-
-**Deploy order:**
-
-```bash
-export DOMAIN=example.com
-export GITHUB_REPOSITORY=my-org/my-repo
-export CDK_DEFAULT_ACCOUNT=123456789012
-
-# 1. Deploy once — creates the hosted zone, certificate, and CI role
-cdk deploy CertStack --app "npx ts-node --esm bin/cert.ts"
-
-# 2. Update your domain's nameservers at your registrar to point to Route53
-#    (find them in the AWS Console → Route53 → Hosted Zones → your domain)
-#    Wait for DNS propagation before continuing.
-
-# 3. Deploy on every commit
-cdk deploy AppStack
+npm install github:sc/genesis-cdk
 ```
 
 ---
 
-### Option 2: Sub-site only
+## Root site setup
 
-Use this when the root domain is already set up (CertStack already deployed) and you want to deploy a subdomain from a separate repo or stack.
+Do this once per domain. It creates the hosted zone, wildcard certificate, and a GitHub Actions OIDC role.
 
-```bash
-npx genesis-cdk init --site
-```
-
-This installs all dependencies and scaffolds:
-
-- `bin/app.ts` — deploys `AppStack` with a `SubSite` that reads the root domain, certificate, and hosted zone from SSM automatically
-
-```bash
-# 1. Edit bin/app.ts — set the subdomain label and src path
-# 2. Deploy
-cdk deploy AppStack
-```
-
-No `DOMAIN` variable needed — the root domain is looked up from the SSM parameter `/genesis-cdk/rootDomain` written by `CertStack`.
-
----
-
-## Constructs
-
-### `CertStack`
-
-One-time per domain. Always deploys to `us-east-1` (required by ACM for CloudFront).
-
-Creates a Route53 hosted zone, ACM wildcard certificate, and writes everything to SSM:
-
-| SSM Parameter | Value |
-|---|---|
-| `/<domain>/certArn` | ACM certificate ARN |
-| `/<domain>/hostedZoneId` | Route53 hosted zone ID |
-| `/<domain>/hostedZoneName` | Root domain name |
-| `/genesis-cdk/rootDomain` | Root domain name (read by `SubSite`) |
+**1. Create `bin/cert.ts`**
 
 ```ts
-import { CertStack } from 'genesis-cdk';
-
-new CertStack(app, 'CertStack', {
-  domain: 'example.com',
-  accountId: '123456789012',
-});
-```
-
-### `CiRole`
-
-Creates a GitHub Actions OIDC role scoped to a specific repo and branch. No long-lived credentials needed — GitHub Actions assumes the role via a short-lived token exchange.
-
-Deploy alongside `CertStack` as part of your one-time setup:
-
-```ts
+#!/usr/bin/env node
+import * as cdk from 'aws-cdk-lib';
 import { CertStack, CiRole } from 'genesis-cdk';
+
+const app = new cdk.App();
 
 const certStack = new CertStack(app, 'CertStack', {
   domain: 'example.com',
-  accountId: '123456789012',
+  accountId: process.env.CDK_DEFAULT_ACCOUNT!,
 });
 
 new CiRole(certStack, 'CiRole', {
   domain: 'example.com',
-  accountId: '123456789012',
-  githubRepo: 'my-org/my-repo',  // scoped to main branch only
+  accountId: process.env.CDK_DEFAULT_ACCOUNT!,
+  githubRepos: ['my-org/my-repo'],
 });
 ```
 
-After deploying, retrieve the role ARN and add it to GitHub → Settings → Secrets as `AWS_ROLE_ARN`:
+**2. Create `bin/app.ts`**
+
+```ts
+#!/usr/bin/env node
+import * as cdk from 'aws-cdk-lib';
+import { RootSite } from 'genesis-cdk';
+
+const app = new cdk.App();
+
+const stack = new cdk.Stack(app, 'AppStack', {
+  env: {
+    account: process.env.CDK_DEFAULT_ACCOUNT,
+    region: 'eu-west-2',
+  },
+});
+
+new RootSite({
+  scope: stack,
+  domain: 'example.com',
+  src: './dist',
+});
+```
+
+**3. Add `cdk.json`**
+
+```json
+{
+  "app": "npx ts-node --esm bin/app.ts"
+}
+```
+
+**4. Bootstrap and deploy the cert stack (once)**
+
+```bash
+export CDK_DEFAULT_ACCOUNT=123456789012
+
+npx cdk bootstrap aws://$CDK_DEFAULT_ACCOUNT/us-east-1
+npx cdk deploy --all --app "npx ts-node --esm bin/cert.ts"
+```
+
+**5. Point your domain's nameservers at Route53**
+
+Find the NS records in the AWS console under Route53 → Hosted Zones → example.com, then update them at your domain registrar. Wait for DNS to propagate before the next step.
+
+**6. Get the CI role ARN and save it as a GitHub secret**
 
 ```bash
 aws cloudformation describe-stacks \
@@ -127,26 +90,37 @@ aws cloudformation describe-stacks \
   --output text
 ```
 
-### `RootSite`
+Add the output as `AWS_ROLE_ARN` in GitHub → Settings → Secrets.
 
-Deploys the root domain (`example.com`). Reads `certArn` and `hostedZoneId` from SSM at synth time.
+**7. Deploy the app stack**
 
-```ts
-import { RootSite } from 'genesis-cdk';
-
-const root = new RootSite({
-  scope: stack,
-  domain: 'example.com',
-  src: './dist',
-});
+```bash
+npx cdk deploy AppStack
 ```
 
-### `SubSite`
+---
 
-Deploys a subdomain as a fully independent stack. Reads the root domain, certificate, and hosted zone entirely from SSM — no manual configuration needed beyond the subdomain label and source path.
+## Sub-site setup
+
+Use this in any repo that deploys a subdomain. The root domain, certificate, and hosted zone are all read from SSM automatically — no config needed beyond the subdomain label and source path.
+
+**Prerequisite:** the root site's `CertStack` must already be deployed.
+
+**1. Create `bin/app.ts`**
 
 ```ts
+#!/usr/bin/env node
+import * as cdk from 'aws-cdk-lib';
 import { SubSite } from 'genesis-cdk';
+
+const app = new cdk.App();
+
+const stack = new cdk.Stack(app, 'AppStack', {
+  env: {
+    account: process.env.CDK_DEFAULT_ACCOUNT,
+    region: 'eu-west-2',
+  },
+});
 
 new SubSite({
   scope: stack,
@@ -155,85 +129,46 @@ new SubSite({
 });
 ```
 
-The root domain is resolved from `/genesis-cdk/rootDomain` written by `CertStack`.
+**2. Add `cdk.json`**
 
-### `Backend` (optional)
+```json
+{
+  "app": "npx ts-node --esm bin/app.ts"
+}
+```
 
-Adds an API Gateway behind CloudFront on `/api/*`:
+**3. Deploy**
 
-```ts
-import { RootSite, Backend } from 'genesis-cdk';
-
-const root = new RootSite({ scope: stack, domain: 'example.com', src: './dist' });
-
-new Backend({
-  scope: stack,
-  id: 'my_backend',
-  domain: 'example.com',
-  cloudfront: root.cloudfrontDist,
-});
+```bash
+npx cdk deploy AppStack
 ```
 
 ---
 
-## Subdomains in the same stack
+## CI/CD
 
-Call `subSite()` on a `RootSite` to add subdomains to the same stack:
+Both workflows are reusable — call them from any repo.
 
-```ts
-const root = new RootSite({ scope: stack, domain: 'example.com', src: './dist' });
-
-root.subSite({ domain: 'blog', src: './blog/dist' });  // blog.example.com
-root.subSite({ domain: 'docs', src: './docs/dist' });  // docs.example.com
-```
-
-For subdomains in a separate stack or repo, use `SubSite` instead.
-
----
-
-## CI/CD with GitHub Actions
-
-### deploy-cert.yml
-
-Run once when setting up a new domain. Uses personal AWS credentials to bootstrap the OIDC provider — after this the CI role takes over for all future deploys.
+### deploy-cert.yml (once per domain)
 
 ```yaml
-name: Deploy Cert Stack
-
 on:
   workflow_dispatch:
 
 jobs:
-  deploy-cert:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-      - run: npm ci
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-      - run: npx cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/us-east-1
-      - run: npx cdk deploy CertStack --app "npx ts-node --esm bin/cert.ts" --require-approval never
-        env:
-          DOMAIN: example.com
-          GITHUB_REPOSITORY: my-org/my-repo
-          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+  cert:
+    uses: sc/genesis-cdk/.github/workflows/deploy-cert.yml@main
+    with:
+      domain: example.com
+      github-repo: my-org/my-repo
+    secrets:
+      aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 ```
 
-### deploy.yml
-
-Runs on every push to `main`. No AWS secrets needed — assumes the OIDC role created by `CiRole`.
+### deploy.yml (every push to main)
 
 ```yaml
-name: Deploy
-
 on:
   push:
     branches: [main]
@@ -244,21 +179,12 @@ permissions:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-      - run: npm ci
-      - run: npm run build
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: eu-west-2
-      - run: npx cdk deploy AppStack --require-approval never
+    uses: sc/genesis-cdk/.github/workflows/deploy-app.yml@main
+    with:
+      domain: example.com
+      aws-region: eu-west-2
+      role-arn: ${{ secrets.AWS_ROLE_ARN }}
+      build-command: npm run build
 ```
 
 ---
@@ -288,7 +214,7 @@ flowchart TD
         ROOT --> DNS_ROOT[Route53 A Record]
     end
 
-    subgraph SubStack["AppStack · sub-site (separate repo/stack)"]
+    subgraph SubStack["AppStack · sub-site"]
         SUB[SubSite]
         SUB --> S3_SUB[S3 Bucket]
         SUB --> CF_SUB[CloudFront Distribution]

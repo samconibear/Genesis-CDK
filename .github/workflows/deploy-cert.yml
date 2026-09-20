@@ -18,6 +18,9 @@
 #   jobs:
 #     cert:
 #       uses: <your-org>/genesis-cdk/.github/workflows/deploy-cert.yml@main
+#       with:
+#         domain: example.com
+#         github-repo: my-org/my-repo
 #       secrets:
 #         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
 #         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -30,6 +33,14 @@ name: Deploy Cert Stack
 on:
   workflow_call:
     inputs:
+      domain:
+        description: Root domain to certify (e.g. example.com)
+        required: true
+        type: string
+      github-repo:
+        description: GitHub repo that will deploy AppStack (e.g. my-org/my-repo) — scopes the OIDC role
+        required: true
+        type: string
       node-version:
         description: Node.js version
         required: false
@@ -59,6 +70,9 @@ permissions:
 jobs:
   deploy-cert:
     runs-on: ubuntu-latest
+    env:
+      DOMAIN: ${{ inputs.domain }}
+      GITHUB_REPOSITORY_INPUT: ${{ inputs.github-repo }}
     steps:
       - uses: actions/checkout@v4
 
@@ -81,5 +95,12 @@ jobs:
           aws-region: us-east-1
 
       - name: Deploy CertStack
-        run: npx cdk deploy CertStack --require-approval never ${{ inputs.extra-cdk-args }}
+        # bin/cert.ts reads DOMAIN and GITHUB_REPOSITORY from the environment.
+        # We use --app to point CDK at the cert entrypoint (not the default app.ts).
+        run: >
+          GITHUB_REPOSITORY="$GITHUB_REPOSITORY_INPUT"
+          npx cdk deploy CertStack
+          --app "npx ts-node --esm bin/cert.ts"
+          --require-approval never
+          ${{ inputs.extra-cdk-args }}
         working-directory: ${{ inputs.working-directory }}

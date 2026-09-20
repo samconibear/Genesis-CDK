@@ -5,6 +5,12 @@
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./lib/index.js",
+      "types": "./lib/index.d.ts"
+    }
+  },
   "bin": {
     "genesis-cdk": "lib/cli.js"
   },
@@ -18,7 +24,13 @@
     "watch": "tsc -w",
     "test": "jest"
   },
-  "keywords": ["aws", "cdk", "cloudfront", "s3", "static-site"],
+  "keywords": [
+    "aws",
+    "cdk",
+    "cloudfront",
+    "s3",
+    "static-site"
+  ],
   "license": "MIT",
   "devDependencies": {
     "@types/jest": "^29.5.14",
@@ -30,11 +42,10 @@
     "typescript": "~5.9.3"
   },
   "peerDependencies": {
-    "aws-cdk-lib": "^2.0.0",
     "constructs": "^10.0.0"
   },
   "dependencies": {
-    "aws-cdk-lib": "2.215.0",
+    "aws-cdk-lib": "^2.270.0",
     "constructs": "^10.0.0"
   }
 }

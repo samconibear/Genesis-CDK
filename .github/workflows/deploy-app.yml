@@ -6,6 +6,7 @@
 #     deploy:
 #       uses: <your-org>/genesis-cdk/.github/workflows/deploy-app.yml@main
 #       with:
+#         domain: example.com
 #         aws-region: eu-west-2
 #         role-arn: arn:aws:iam::123456789012:role/genesis-cdk-ci-example.com
 #       permissions:
@@ -20,6 +21,10 @@ name: Deploy App
 on:
   workflow_call:
     inputs:
+      domain:
+        description: Root domain (e.g. example.com) — passed as DOMAIN env var to bin/app.ts
+        required: true
+        type: string
       aws-region:
         description: AWS region for the AppStack
         required: true
@@ -63,6 +68,8 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      DOMAIN: ${{ inputs.domain }}
     steps:
       - uses: actions/checkout@v4
 

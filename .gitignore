@@ -3,3 +3,4 @@ cdk.out/
 *.pkg
 *.zip
 lib/
+src/**/*.js

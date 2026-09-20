@@ -12,5 +12,5 @@
     "inlineSources": true
   },
   "include": ["bin/**/*.ts"],
-  "exclude": ["bin/app.ts", "bin/cert.ts"]
+  "exclude": ["bin/app.ts"]
 }
