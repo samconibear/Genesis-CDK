@@ -1,32 +1,50 @@
 #!/usr/bin/env node
+// Run from the parent project root: node genesis-cdk/setup.js --root|--site --domain=example.com [--subdomain=blog] [--src=./dist]
 import { execSync } from 'child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { join, relative, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
 const args = process.argv.slice(2);
-const command = args[0];
-const isCore = args.includes('--core');
 
-const domainFlagIndex = args.findIndex(a => a.startsWith('--domain='));
-const domain = domainFlagIndex !== -1
-  ? args[domainFlagIndex].slice('--domain='.length)
-  : undefined;
+const isRoot = args.includes('--root');
+const isSite = args.includes('--site');
 
-if (command !== 'init') {
-  console.error('Usage: genesis-cdk init [--core|--site] --domain=<domain>');
+if (!isRoot && !isSite) {
+  console.error('Usage: node genesis-cdk/setup.js --root|--site --domain=<domain> [--subdomain=<sub>] [--src=<path>]');
   process.exit(1);
 }
+
+const domainArg = args.find(a => a.startsWith('--domain='));
+const domain = domainArg?.slice('--domain='.length);
 
 if (!domain) {
   console.error('Error: --domain=<domain> is required (e.g. --domain=example.com)');
   process.exit(1);
 }
 
+const subdomainArg = args.find(a => a.startsWith('--subdomain='));
+const subdomain = subdomainArg?.slice('--subdomain='.length);
+
+if (isSite && !subdomain) {
+  console.error('Error: --subdomain=<sub> is required for --site (e.g. --subdomain=blog)');
+  process.exit(1);
+}
+
+const srcArg = args.find(a => a.startsWith('--src='));
+const src = srcArg?.slice('--src='.length) ?? './dist';
+
 const stackName = domain.replace(/\./g, '-');
 
+// Path to this repo's lib/ relative to the directory the script is run from
+const scriptDir = dirname(fileURLToPath(import.meta.url));
 const cwd = process.cwd();
+const genesisLibPath = relative(cwd, join(scriptDir, 'src', 'index.js')).replace(/\\/g, '/');
 
-console.log('Installing dependencies...');
+// Ensure it starts with ./ for valid relative import
+const libImport = genesisLibPath.startsWith('.') ? genesisLibPath : './' + genesisLibPath;
+
+console.log('Installing CDK dependencies...');
 execSync('npm install --save aws-cdk-lib constructs', { stdio: 'inherit', cwd });
 execSync('npm install --save-dev aws-cdk typescript ts-node @types/node', { stdio: 'inherit', cwd });
 
@@ -74,14 +92,14 @@ if (!existsSync(join(cwd, 'tsconfig.json'))) {
 
 mkdirSync(join(cwd, 'bin'), { recursive: true });
 
-if (isCore) {
+if (isRoot) {
   const certPath = join(cwd, 'bin', 'cert.ts');
   if (!existsSync(certPath)) {
     writeFileSync(
       certPath,
       `#!/usr/bin/env node
 import * as cdk from 'aws-cdk-lib';
-import { CertStack, CiRole } from 'genesis-cdk';
+import { CertStack, CiRole } from '${libImport}';
 
 const app = new cdk.App();
 
@@ -106,7 +124,7 @@ new CiRole(certStack, 'CiRole', {
       appPath,
       `#!/usr/bin/env node
 import * as cdk from 'aws-cdk-lib';
-import { RootSite } from 'genesis-cdk';
+import { RootSite } from '${libImport}';
 
 const app = new cdk.App();
 
@@ -120,24 +138,32 @@ const stack = new cdk.Stack(app, '${stackName}', {
 new RootSite({
   scope: stack,
   domain: '${domain}',
-  src: './dist',
+  src: '${src}',
 });
 `
     );
     console.log('Created bin/app.ts');
   }
+
+  console.log('\nDone. Next steps:');
+  console.log(`  1. Deploy the certificate stack once:`);
+  console.log(`     cdk deploy --all --app "npx ts-node --esm bin/cert.ts"`);
+  console.log('  2. Update nameservers at your registrar to point to Route53, then wait for DNS propagation');
+  console.log(`  3. Deploy your site: cdk deploy ${stackName}`);
 } else {
   const appPath = join(cwd, 'bin', 'app.ts');
   if (!existsSync(appPath)) {
+    const fullDomain = `${subdomain}.${domain}`;
+    const siteStackName = fullDomain.replace(/\./g, '-');
     writeFileSync(
       appPath,
       `#!/usr/bin/env node
 import * as cdk from 'aws-cdk-lib';
-import { SubSite } from 'genesis-cdk';
+import { SubSite } from '${libImport}';
 
 const app = new cdk.App();
 
-const stack = new cdk.Stack(app, '${stackName}', {
+const stack = new cdk.Stack(app, '${siteStackName}', {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: process.env.CDK_DEFAULT_REGION ?? 'eu-west-2',
@@ -146,22 +172,14 @@ const stack = new cdk.Stack(app, '${stackName}', {
 
 new SubSite({
   scope: stack,
-  domain: '${domain}',
-  src: './dist',
+  domain: '${fullDomain}',
+  src: '${src}',
 });
 `
     );
     console.log('Created bin/app.ts');
   }
-}
 
-if (isCore) {
   console.log('\nDone. Next steps:');
-  console.log(`  1. Deploy the certificate stack once: cdk deploy --all --app "npx ts-node --esm bin/cert.ts"`);
-  console.log('  2. Update nameservers at your registrar to point to Route53, then wait for DNS propagation');
-  console.log(`  3. Deploy your site: cdk deploy ${stackName}`);
-} else {
-  console.log('\nDone. Next steps:');
-  console.log('  1. Edit bin/app.ts — set the src path');
-  console.log(`  2. Deploy: cdk deploy ${stackName}`);
+  console.log(`  1. Deploy: cdk deploy ${subdomain}-${stackName}`);
 }

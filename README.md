@@ -4,167 +4,100 @@ CDK constructs for deploying static websites on AWS — S3, CloudFront, Route53,
 
 ---
 
-## Install
+## Prerequisites
 
-```bash
-npm install github:sc/genesis-cdk
-```
+- AWS CLI configured with credentials
+- Node.js 18+
+- AWS CDK bootstrapped in your account (`npx cdk bootstrap`)
 
 ---
 
-## Root site setup
+## Setup
 
-Do this once per domain. It creates the hosted zone, wildcard certificate, and a GitHub Actions OIDC role.
+### 1. Clone this repo into your project
 
-**1. Create `bin/cert.ts`**
-
-```ts
-#!/usr/bin/env node
-import * as cdk from 'aws-cdk-lib';
-import { CertStack, CiRole } from 'genesis-cdk';
-
-const app = new cdk.App();
-
-const certStack = new CertStack(app, 'CertStack', {
-  domain: 'example.com',
-  accountId: process.env.CDK_DEFAULT_ACCOUNT!,
-});
-
-new CiRole(certStack, 'CiRole', {
-  domain: 'example.com',
-  accountId: process.env.CDK_DEFAULT_ACCOUNT!,
-  githubRepos: ['my-org/my-repo'],
-});
+```bash
+git clone https://github.com/sc/genesis-cdk.git
 ```
 
-**2. Create `bin/app.ts`**
+### 2. Run the setup script
 
-```ts
-#!/usr/bin/env node
-import * as cdk from 'aws-cdk-lib';
-import { RootSite } from 'genesis-cdk';
+**Root site** — do this once per domain. Sets up the hosted zone, wildcard certificate, and GitHub Actions OIDC role.
 
-const app = new cdk.App();
-
-const stack = new cdk.Stack(app, 'AppStack', {
-  env: {
-    account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: 'eu-west-2',
-  },
-});
-
-new RootSite({
-  scope: stack,
-  domain: 'example.com',
-  src: './dist',
-});
+```bash
+node genesis-cdk/setup.js --root --domain=example.com
 ```
 
-**3. Add `cdk.json`**
+**Sub-site** — use this in any repo that deploys a subdomain. Requires the root site's cert stack to already be deployed.
 
-```json
-{
-  "app": "npx ts-node --esm bin/app.ts"
-}
+```bash
+node genesis-cdk/setup.js --site --domain=example.com --subdomain=blog
 ```
 
-**4. Bootstrap and deploy the cert stack (once)**
+Optional flag: `--src=./dist` to set the path to your build output (defaults to `./dist`).
+
+The script scaffolds `bin/app.ts`, `cdk.json`, and `tsconfig.json` into your project root and installs CDK dependencies.
+
+### 3. Update the configuration
+
+Open `bin/app.ts` and verify:
+
+- **`domain`** — your root domain (e.g. `example.com`) or full subdomain (e.g. `blog.example.com`)
+- **`src`** — path to your built site output (e.g. `./dist`)
+
+For root sites, also open `bin/cert.ts` and set:
+
+- **`githubRepos`** — the GitHub repos that should have deploy access (e.g. `['my-org/my-repo']`)
+
+---
+
+## Deploying
+
+### Root site (first time)
+
+**1. Bootstrap CDK in us-east-1** (the certificate must live there for CloudFront)
 
 ```bash
 export CDK_DEFAULT_ACCOUNT=123456789012
-
 npx cdk bootstrap aws://$CDK_DEFAULT_ACCOUNT/us-east-1
+```
+
+**2. Deploy the cert stack**
+
+```bash
 npx cdk deploy --all --app "npx ts-node --esm bin/cert.ts"
 ```
 
-**5. Point your domain's nameservers at Route53**
+**3. Point your domain's nameservers at Route53**
 
 Find the NS records in the AWS console under Route53 → Hosted Zones → example.com, then update them at your domain registrar. Wait for DNS to propagate before the next step.
 
-**6. Get the CI role ARN and save it as a GitHub secret**
+**4. Save the CI role ARN as a GitHub secret**
 
 ```bash
 aws cloudformation describe-stacks \
-  --stack-name CertStack \
+  --stack-name example-com-cert \
   --query "Stacks[0].Outputs[?OutputKey=='CiRoleArn'].OutputValue" \
   --output text
 ```
 
 Add the output as `AWS_ROLE_ARN` in GitHub → Settings → Secrets.
 
-**7. Deploy the app stack**
+**5. Deploy the site**
 
 ```bash
-npx cdk deploy AppStack
+npx cdk deploy example-com
 ```
 
----
-
-## Sub-site setup
-
-Use this in any repo that deploys a subdomain. The root domain, certificate, and hosted zone are all read from SSM automatically — no config needed beyond the subdomain label and source path.
-
-**Prerequisite:** the root site's `CertStack` must already be deployed.
-
-**1. Create `bin/app.ts`**
-
-```ts
-#!/usr/bin/env node
-import * as cdk from 'aws-cdk-lib';
-import { SubSite } from 'genesis-cdk';
-
-const app = new cdk.App();
-
-const stack = new cdk.Stack(app, 'AppStack', {
-  env: {
-    account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: 'eu-west-2',
-  },
-});
-
-new SubSite({
-  scope: stack,
-  domain: 'blog',   // deploys to blog.example.com
-  src: './dist',
-});
-```
-
-**2. Add `cdk.json`**
-
-```json
-{
-  "app": "npx ts-node --esm bin/app.ts"
-}
-```
-
-**3. Deploy**
+### Sub-site
 
 ```bash
-npx cdk deploy AppStack
+npx cdk deploy blog-example-com
 ```
 
 ---
 
 ## CI/CD
-
-Both workflows are reusable — call them from any repo.
-
-### deploy-cert.yml (once per domain)
-
-```yaml
-on:
-  workflow_dispatch:
-
-jobs:
-  cert:
-    uses: sc/genesis-cdk/.github/workflows/deploy-cert.yml@main
-    with:
-      domain: example.com
-      github-repo: my-org/my-repo
-    secrets:
-      aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-```
 
 ### deploy.yml (every push to main)
 
