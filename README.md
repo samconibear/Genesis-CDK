@@ -17,7 +17,7 @@ CDK constructs for deploying static websites on AWS — S3, CloudFront, Route53,
 ### 1. Clone this repo into your project
 
 ```bash
-git clone https://github.com/sc/genesis-cdk.git
+git clone https://github.com/samconibear/genesis-cdk.git
 ```
 
 ### 2. Run the setup script

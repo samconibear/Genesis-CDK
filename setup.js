@@ -39,21 +39,22 @@ const stackName = domain.replace(/\./g, '-');
 // Path to this repo's lib/ relative to the directory the script is run from
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const cwd = process.cwd();
-const genesisLibPath = relative(cwd, join(scriptDir, 'src', 'index.js')).replace(/\\/g, '/');
+const binDir = join(cwd, 'bin');
+const genesisLibPath = relative(binDir, join(scriptDir, 'src', 'index.js')).replace(/\\/g, '/');
 
 // Ensure it starts with ./ for valid relative import
 const libImport = genesisLibPath.startsWith('.') ? genesisLibPath : './' + genesisLibPath;
 
 console.log('Installing CDK dependencies...');
 execSync('npm install --save aws-cdk-lib constructs', { stdio: 'inherit', cwd });
-execSync('npm install --save-dev aws-cdk typescript ts-node @types/node', { stdio: 'inherit', cwd });
+execSync('npm install --save-dev aws-cdk typescript tsx @types/node', { stdio: 'inherit', cwd });
 
 if (!existsSync(join(cwd, 'cdk.json'))) {
   writeFileSync(
     join(cwd, 'cdk.json'),
     JSON.stringify(
       {
-        app: 'npx ts-node --esm bin/app.ts',
+        app: 'npx tsx bin/app.ts',
         context: {
           '@aws-cdk/aws-apigateway:usagePlanKeyOrderInsensitiveId': true,
           '@aws-cdk/core:stackRelativeExports': true,
