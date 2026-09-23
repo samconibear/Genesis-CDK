@@ -154,8 +154,7 @@ new RootSite({
 } else {
   const appPath = join(cwd, 'bin', 'app.ts');
   if (!existsSync(appPath)) {
-    const fullDomain = `${subdomain}.${domain}`;
-    const siteStackName = fullDomain.replace(/\./g, '-');
+    const siteStackName = `${subdomain}-${domain}`.replace(/\./g, '-');
     writeFileSync(
       appPath,
       `#!/usr/bin/env node
@@ -173,7 +172,7 @@ const stack = new cdk.Stack(app, '${siteStackName}', {
 
 new SubSite({
   scope: stack,
-  domain: '${fullDomain}',
+  domain: '${subdomain}',
   src: '${src}',
 });
 `
