@@ -1,6 +1,6 @@
 import { Stack, aws_route53, aws_certificatemanager } from 'aws-cdk-lib';
-import { BaseSite, BaseSiteProps } from './base-site.js';
-import { ssmParamName, ssmLookup } from './cert-stack.js';
+import { BaseSite, BaseSiteProps } from './base-site.ts';
+import { ssmParamName, ssmLookup } from './cert-stack.ts';
 
 export interface RootSiteProps {
   scope: Stack;

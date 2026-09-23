@@ -13,7 +13,7 @@ import {
   Size,
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
-import { SubSiteProps } from './sub-site.js';
+import { SubSiteProps } from './sub-site.ts';
 import { randomUUID } from 'crypto';
 
 export interface BaseSiteProps {

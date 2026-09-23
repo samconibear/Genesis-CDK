@@ -1,8 +1,8 @@
 
 
-export { CertStack, CertStackProps, ssmParamName, ssmLookup } from './cert-stack.js';
-export { CiRole, CiRoleProps } from './ci-role.js';
-export { BaseSite, BaseSiteProps } from './base-site.js';
-export { RootSite, RootSiteProps } from './root-site.js';
-export { SubSite, SubSiteProps } from './sub-site.js';
-export { Backend, BackendProps } from './backend.js';
+export { CertStack, CertStackProps, ssmParamName, ssmLookup } from './cert-stack';
+export { CiRole, CiRoleProps } from './ci-role';
+export { BaseSite, BaseSiteProps } from './base-site';
+export { RootSite, RootSiteProps } from './root-site';
+export { SubSite, SubSiteProps } from './sub-site';
+export { Backend, BackendProps } from './backend';
