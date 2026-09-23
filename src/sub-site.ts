@@ -37,6 +37,7 @@ export class SubSite extends BaseSite {
 
     super({
       scope: props.scope,
+      id: props.domain,
       src: props.src,
       domains: [props.domain, rootDomain],
       hostedZone,
