@@ -34,6 +34,7 @@ export class RootSite extends BaseSite {
 
     super({
       ...props,
+      id: props.domain.replaceAll('.', '-'),
       hostedZone,
       cloudfrontCertificate,
       domains: [props.domain],

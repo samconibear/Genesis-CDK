@@ -14,7 +14,6 @@ import {
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import { SubSiteProps } from './sub-site.ts';
-import { randomUUID } from 'crypto';
 
 export interface BaseSiteProps {
   scope: Stack;
@@ -24,6 +23,7 @@ export interface BaseSiteProps {
   hostedZone: route53.IHostedZone;
   cloudfrontCertificate: certificatemanager.ICertificate;
   bucketNameParameterName?: string;
+  cloudfrontLogicalId?: string;
 }
 
 export class BaseSite extends Construct {
@@ -39,7 +39,8 @@ export class BaseSite extends Construct {
   get cloudfrontDist(): cloudfront.Distribution { return this._cloudfrontDist; }
   get cloudfrontArn(): string { return this._cloudfrontDist.distributionArn; }
 
-  constructor({ scope, id = randomUUID(), ...props }: BaseSiteProps) {
+  constructor({ scope, id, ...props }: BaseSiteProps) {
+    if (!id) id = props.domains.join('-').replaceAll('.', '-');
     super(scope, id);
     this._scope = scope;
     this._hostedZone = props.hostedZone;
