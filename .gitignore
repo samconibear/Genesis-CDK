@@ -4,3 +4,6 @@ lib/
 *.pkg
 *.zip
 src/**/*.js
+docs/api/
+docs/.vitepress/dist/
+docs/typedoc-sidebar.json
