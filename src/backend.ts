@@ -25,8 +25,8 @@ export interface BackendProps {
   domain: string;
   /** CloudFront distribution to attach the /api/* behavior to */
   cloudfront: cloudfront.Distribution;
-  /** VPC the Lambda will run inside */
-  vpc: ec2.IVpc;
+  /** VPC the Lambda will run inside; omit to run Lambda outside any VPC */
+  vpc?: ec2.IVpc;
   /** Path to the Lambda code asset directory */
   codePath: string;
   /** Lambda handler, e.g. 'index.handler' */
@@ -50,8 +50,11 @@ export class Backend extends Construct {
   private _api: apigateway.Resource;
   get api(): apigateway.Resource { return this._api; }
 
-  private _securityGroup: ec2.SecurityGroup;
-  get securityGroup(): ec2.SecurityGroup { return this._securityGroup; }
+  private _securityGroup: ec2.SecurityGroup | undefined;
+  get securityGroup(): ec2.SecurityGroup {
+    if (!this._securityGroup) throw new Error('securityGroup is only available when vpc is provided');
+    return this._securityGroup;
+  }
 
   private _props: Omit<BackendProps, 'scope'>;
   private _rootDomain: string;
@@ -110,29 +113,35 @@ export class Backend extends Construct {
   private createLambda(): void {
     const { domain, vpc, vpcSubnets, codePath, handler, runtime, environment, memorySize, timeout } = this._props;
 
-    // Security group for the backend Lambda — no outbound by default
-    this._securityGroup = new ec2.SecurityGroup(this, 'lambda_sg', {
-      vpc,
-      allowAllOutbound: false,
-      description: `Security group for ${domain} backend lambda`,
-      disableInlineRules: true,
-    });
-
     const lambdaRole = new iam.Role(this, 'lambda_role', {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
       description: `IAM role for ${domain} backend lambda`,
     });
 
-    lambdaRole.addToPolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: [
+    const iamActions = [
+      'logs:CreateLogGroup',
+      'logs:CreateLogStream',
+      'logs:PutLogEvents',
+    ];
+
+    if (vpc) {
+      iamActions.push(
         'ec2:DescribeNetworkInterfaces',
         'ec2:CreateNetworkInterface',
         'ec2:DeleteNetworkInterface',
-        'logs:CreateLogGroup',
-        'logs:CreateLogStream',
-        'logs:PutLogEvents',
-      ],
+      );
+
+      this._securityGroup = new ec2.SecurityGroup(this, 'lambda_sg', {
+        vpc,
+        allowAllOutbound: false,
+        description: `Security group for ${domain} backend lambda`,
+        disableInlineRules: true,
+      });
+    }
+
+    lambdaRole.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: iamActions,
       resources: ['*'],
     }));
 
@@ -144,11 +153,13 @@ export class Backend extends Construct {
 
     this._lambda = new lambda.Function(this, 'lambda_function', {
       description: `Backend lambda for ${domain}`,
-      vpc,
+      ...(vpc && this._securityGroup && {
+        vpc,
+        allowPublicSubnet: false,
+        vpcSubnets: vpcSubnets ?? { subnets: [] },
+        securityGroups: [this._securityGroup],
+      }),
       role: lambdaRole,
-      allowPublicSubnet: false,
-      vpcSubnets: vpcSubnets ?? { subnets: [] },
-      securityGroups: [this._securityGroup],
       code: lambda.Code.fromAsset(codePath),
       handler,
       runtime,
@@ -308,17 +319,9 @@ exports.handler = async (event) => {
     });
   }
 
-  /** Allow the backend Lambda to make outbound HTTP/HTTPS calls */
+  /** Allow the backend Lambda to make outbound HTTP/HTTPS calls; only valid when vpc is provided */
   addEgressInternet(): void {
-    this._securityGroup.addEgressRule(
-      ec2.Peer.anyIpv4(),
-      ec2.Port.tcp(80),
-      'allow outbound http'
-    );
-    this._securityGroup.addEgressRule(
-      ec2.Peer.anyIpv4(),
-      ec2.Port.tcp(443),
-      'allow outbound https'
-    );
+    this.securityGroup.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80), 'allow outbound http');
+    this.securityGroup.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), 'allow outbound https');
   }
 }

@@ -6,3 +6,4 @@ export { BaseSite, BaseSiteProps } from './base-site';
 export { RootSite, RootSiteProps } from './root-site';
 export { SubSite, SubSiteProps } from './sub-site';
 export { Backend, BackendProps } from './backend';
+export { Ec2, Ec2Props, HostnameProps } from './ec2';

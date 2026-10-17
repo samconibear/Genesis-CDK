@@ -2,11 +2,15 @@
 
 ##### _In the beginning, the cloud was formless and empty._
 ##### _And God said, "Let there be stacks" and there were stacks._
-##### _And God saw that the stacks were good_
+##### _And God saw that the stacks were good._
 
-...
+---
 
-From nothing, CDK constructs that handle the full creation of a web app on AWS - so you can ship without building the world from scratch.
+From nothing to a fully working web-app.
+This library provides ready made CDK constructs that handle the full creation of a web app on AWS
+So you can ship without building the world from scratch.
+
+---
 
 ## Documentation
 
