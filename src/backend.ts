@@ -1,14 +1,11 @@
 import {
   aws_apigateway as apigateway,
-  aws_certificatemanager as acm,
   aws_cloudfront as cloudfront,
   aws_cloudfront_origins as cloudfront_origins,
   aws_ec2 as ec2,
   aws_iam as iam,
   aws_lambda as lambda,
   aws_logs as logs,
-  aws_route53 as route53,
-  aws_route53_targets as route53_targets,
   aws_secretsmanager as secretsmanager,
   aws_ssm as ssm,
   Duration,
@@ -56,43 +53,32 @@ export class Backend extends Construct {
     return this._securityGroup;
   }
 
+  private _lambdaRole!: iam.Role;
+
   private _props: Omit<BackendProps, 'scope'>;
   private _rootDomain: string;
 
   constructor({ scope, ...props }: BackendProps) {
     const rootDomain = ssmLookup(scope, ssmParamName.rootDomain);
-    const hostedZoneId = ssmLookup(scope, ssmParamName.hostedZoneId(rootDomain));
-    const hostedZoneName = ssmLookup(scope, ssmParamName.hostedZoneName(rootDomain));
-    const certArnRaw = ssmLookup(scope, ssmParamName.certArn(rootDomain));
-    const certArn = certArnRaw.startsWith('dummy-value-for-')
-      ? 'arn:aws:acm:us-east-1:123456789012:certificate/dummy'
-      : certArnRaw;
 
     super(scope, props.domain);
 
     this._props = props;
     this._rootDomain = rootDomain;
 
-    const hostedZone = route53.HostedZone.fromHostedZoneAttributes(this, 'hosted_zone', {
-      hostedZoneId,
-      zoneName: hostedZoneName,
-    });
-
-    const certificate = acm.Certificate.fromCertificateArn(this, 'certificate', certArn);
-
-    const { originSecret, recordName } = this.createOriginSecret();
+    const originSecret = this.createOriginSecret();
     this.createLambda();
     const authorizer = this.createAuthorizer(originSecret);
-    this.createApiGateway(recordName, certificate, hostedZone, authorizer);
-    this.attachToCloudFront(recordName, originSecret);
+    this.createApiGateway(authorizer);
+    this.attachToCloudFront(originSecret);
   }
 
-  private createOriginSecret(): { originSecret: secretsmanager.Secret; recordName: string } {
+  private createOriginSecret(): secretsmanager.Secret {
     const { domain } = this._props;
     const rootDomain = this._rootDomain;
 
     // Secret shared between CloudFront (as a custom header) and the API Gateway authorizer.
-    // Direct calls to the custom domain without this header are rejected by the authorizer.
+    // Direct calls to the execute-api endpoint without this header are rejected by the authorizer.
     const originSecret = new secretsmanager.Secret(this, 'origin_secret', {
       description: `CloudFront origin verification secret for ${domain} API`,
       generateSecretString: { excludePunctuation: true, passwordLength: 32 },
@@ -105,15 +91,13 @@ export class Backend extends Construct {
       description: `ARN of the CloudFront origin secret for ${domain} API`,
     });
 
-    const recordName = `${domain}.${rootDomain}`;
-
-    return { originSecret, recordName };
+    return originSecret;
   }
 
   private createLambda(): void {
     const { domain, vpc, vpcSubnets, codePath, handler, runtime, environment, memorySize, timeout } = this._props;
 
-    const lambdaRole = new iam.Role(this, 'lambda_role', {
+    this._lambdaRole = new iam.Role(this, 'lambda_role', {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
       description: `IAM role for ${domain} backend lambda`,
     });
@@ -139,7 +123,7 @@ export class Backend extends Construct {
       });
     }
 
-    lambdaRole.addToPolicy(new iam.PolicyStatement({
+    this._lambdaRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: iamActions,
       resources: ['*'],
@@ -159,7 +143,7 @@ export class Backend extends Construct {
         vpcSubnets: vpcSubnets ?? { subnets: [] },
         securityGroups: [this._securityGroup],
       }),
-      role: lambdaRole,
+      role: this._lambdaRole,
       code: lambda.Code.fromAsset(codePath),
       handler,
       runtime,
@@ -231,12 +215,7 @@ exports.handler = async (event) => {
     });
   }
 
-  private createApiGateway(
-    recordName: string,
-    certificate: acm.ICertificate,
-    hostedZone: route53.IHostedZone,
-    authorizer: apigateway.RequestAuthorizer,
-  ): void {
+  private createApiGateway(authorizer: apigateway.RequestAuthorizer): void {
     const { domain, binaryMediaTypes } = this._props;
 
     const apiLogGroup = new logs.LogGroup(this, 'apigw_log_group', {
@@ -247,17 +226,9 @@ exports.handler = async (event) => {
 
     this._apigw = new apigateway.RestApi(this, 'rest_api', {
       binaryMediaTypes: binaryMediaTypes ?? [],
-      domainName: {
-        certificate,
-        domainName: recordName,
-        basePath: 'gw_stage',
-        endpointType: apigateway.EndpointType.REGIONAL,
-        securityPolicy: apigateway.SecurityPolicy.TLS_1_2,
-      },
       endpointConfiguration: {
         types: [apigateway.EndpointType.REGIONAL],
       },
-      disableExecuteApiEndpoint: true,
       restApiName: `${domain}_api_gateway`,
       minCompressionSize: Size.mebibytes(0),
       deploy: true,
@@ -267,15 +238,6 @@ exports.handler = async (event) => {
         loggingLevel: apigateway.MethodLoggingLevel.INFO,
       },
       cloudWatchRole: false,
-    });
-
-    new route53.ARecord(this, 'api_arecord', {
-      comment: `A Record to API Gateway for ${domain}`,
-      zone: hostedZone,
-      target: route53.RecordTarget.fromAlias(
-        new route53_targets.ApiGateway(this._apigw)
-      ),
-      recordName,
     });
 
     this._api = this._apigw.root.addResource('api');
@@ -289,12 +251,14 @@ exports.handler = async (event) => {
     this._api.addResource('{proxy+}').addMethod('ANY', lambdaIntegration, { authorizer });
   }
 
-  private attachToCloudFront(recordName: string, originSecret: secretsmanager.Secret): void {
+  private attachToCloudFront(originSecret: secretsmanager.Secret): void {
     const { domain } = this._props;
 
+    const originHostname = `${this._apigw.restApiId}.execute-api.${Stack.of(this).region}.amazonaws.com`;
+
     // CloudFront origin — forwards the secret header so the authorizer accepts it
-    const cfOrigin = new cloudfront_origins.HttpOrigin(recordName, {
-      originPath: '/gw_stage',
+    const cfOrigin = new cloudfront_origins.HttpOrigin(originHostname, {
+      originPath: `/${this._apigw.deploymentStage.stageName}`,
       originSslProtocols: [cloudfront.OriginSslPolicy.TLS_V1_2],
       protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
       customHeaders: {
@@ -306,16 +270,10 @@ exports.handler = async (event) => {
       allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
       compress: false,
       viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-      originRequestPolicy: new cloudfront.OriginRequestPolicy(this, 'api_origin_request_policy', {
-        comment: `${domain} API origin request policy`,
-        queryStringBehavior: cloudfront.OriginRequestQueryStringBehavior.all(),
-        headerBehavior: cloudfront.OriginRequestHeaderBehavior.allowList(
-          'Content-Type',
-          'Authorization',
-          'Accept',
-        ),
-        cookieBehavior: cloudfront.OriginRequestCookieBehavior.none(),
-      }),
+      cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+      // ALL_VIEWER_EXCEPT_HOST_HEADER forwards all viewer headers (including Authorization)
+      // without CloudFront re-setting Host to the origin hostname.
+      originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
     });
   }
 
@@ -323,5 +281,27 @@ exports.handler = async (event) => {
   addEgressInternet(): void {
     this.securityGroup.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80), 'allow outbound http');
     this.securityGroup.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), 'allow outbound https');
+  }
+
+  /** Grant the backend Lambda permission to invoke specific Bedrock models or cross-region inference profiles */
+  grantBedrockInvoke(modelIds: string[]): void {
+    const region = Stack.of(this).region;
+    const account = Stack.of(this).account;
+    const actions = [
+      'bedrock:InvokeModel',
+      'bedrock:InvokeModelWithResponseStream',
+      'bedrock:Converse',
+      'bedrock:ConverseStream',
+    ];
+    this._lambdaRole.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions,
+      resources: modelIds.map(id => `arn:aws:bedrock:${region}::foundation-model/${id}`),
+    }));
+    this._lambdaRole.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions,
+      resources: modelIds.map(id => `arn:aws:bedrock:${region}:${account}:inference-profile/${id}`),
+    }));
   }
 }
