@@ -4,8 +4,10 @@ import {
   aws_iam as iam,
   aws_route53 as route53,
   RemovalPolicy,
+  Stack,
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
+import { Backend } from './backend.ts';
 
 export interface HostnameProps {
   /** Short name used as the DNS record, e.g. 'myserver' */
@@ -29,11 +31,20 @@ export interface Ec2Props {
   readonly hostname?: HostnameProps;
   /** AMI owner account ID; defaults to Amazon (137112412989) */
   readonly amiOwner?: string;
+  /**
+   * Full SSM parameter path for the AMI ID.
+   * e.g. /aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id
+   * If provided, takes precedence over amiOwner.
+   */
+  readonly amiSsmPath?: string;
+  /** IAM policy statements to attach to the instance role */
+  readonly additionalPolicies?: iam.PolicyStatement[];
 }
 
 export class Ec2 extends Construct {
   private _instance: ec2.Instance;
   get instance(): ec2.Instance { return this._instance; }
+  get instanceId(): string { return this._instance.instanceId; }
 
   private _securityGroup: ec2.SecurityGroup;
   get securityGroup(): ec2.SecurityGroup { return this._securityGroup; }
@@ -64,7 +75,7 @@ export class Ec2 extends Construct {
     this._securityGroup.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80), 'outbound http');
     this._securityGroup.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), 'outbound https');
 
-    const machineImage = this.resolveAmi(props.amiOwner);
+    const machineImage = this.resolveAmi(props.amiSsmPath, props.amiOwner);
     const instanceType = props.instanceType
       ?? ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MICRO);
 
@@ -82,6 +93,12 @@ export class Ec2 extends Construct {
       userDataCausesReplacement: true,
       instanceInitiatedShutdownBehavior: props.instanceInitiatedShutdownBehavior,
     });
+
+    if (props.additionalPolicies) {
+      for (const statement of props.additionalPolicies) {
+        role.addToPrincipalPolicy(statement);
+      }
+    }
 
     this.addBootstrapUserData();
 
@@ -121,7 +138,45 @@ export class Ec2 extends Construct {
     this._securityGroup.addEgressRule(peer, port, description ?? '');
   }
 
-  private resolveAmi(amiOwner?: string): ec2.IMachineImage {
+  /** Grant an IAM role permission to start, stop, and describe this instance */
+  allowStartStop(role: iam.IRole): void {
+    role.addToPrincipalPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['ec2:StartInstances', 'ec2:StopInstances'],
+      resources: [
+        Stack.of(this).formatArn({
+          service: 'ec2',
+          resource: 'instance',
+          resourceName: this._instance.instanceId,
+        }),
+      ],
+    }));
+    // DescribeInstances/DescribeInstanceStatus do not support resource-level restrictions
+    role.addToPrincipalPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['ec2:DescribeInstances', 'ec2:DescribeInstanceStatus'],
+      resources: ['*'],
+    }));
+  }
+
+  /** Wire SG rules so the given Backend's Lambda can reach the vLLM port on this instance */
+  allowInferenceFrom(backend: Backend, port = 8000): void {
+    this._securityGroup.addIngressRule(
+      ec2.Peer.securityGroupId(backend.securityGroup.securityGroupId),
+      ec2.Port.tcp(port),
+      'vLLM inference from Lambda',
+    );
+    backend.securityGroup.addEgressRule(
+      ec2.Peer.securityGroupId(this._securityGroup.securityGroupId),
+      ec2.Port.tcp(port),
+      'vLLM inference to EC2',
+    );
+  }
+
+  private resolveAmi(amiSsmPath?: string, amiOwner?: string): ec2.IMachineImage {
+    if (amiSsmPath) {
+      return ec2.MachineImage.fromSsmParameter(amiSsmPath);
+    }
     return ec2.MachineImage.lookup({
       name: 'al2023-ami-*-kernel-*-x86_64',
       owners: [amiOwner ?? '137112412989'],
