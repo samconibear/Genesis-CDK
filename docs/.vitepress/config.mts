@@ -35,6 +35,7 @@ export default defineConfig({
             { text: 'RootSite', link: '/guide/root-site' },
             { text: 'SubSite', link: '/guide/sub-site' },
             { text: 'Backend', link: '/guide/backend' },
+            { text: 'Ec2', link: '/guide/ec2' },
             { text: 'CiRole', link: '/guide/ci-role' },
           ],
         },
